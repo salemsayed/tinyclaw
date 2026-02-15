@@ -131,6 +131,46 @@ export async function invokeAgent(
     const timeoutMs = maxResponseTimeSec * 1000;
 
     if (provider === 'openai') {
+        const modelId = resolveCodexModel(agent.model);
+
+        // Review mode: use `codex exec review --uncommitted` for code review agents
+        if (agent.mode === 'review') {
+            log('INFO', `Using Codex review mode (agent: ${agentId})`);
+
+            const codexArgs = ['exec', 'review', '--uncommitted'];
+            if (modelId) {
+                codexArgs.push('--model', modelId);
+            }
+            codexArgs.push(
+                '-c', 'model_reasoning_effort="high"',
+                '--dangerously-bypass-approvals-and-sandbox',
+                '--skip-git-repo-check',
+                '--json'
+            );
+            // Teammate handoff message becomes custom review instructions
+            if (message) {
+                codexArgs.push(message);
+            }
+
+            const { stdout: codexOutput } = await runCommand('codex', codexArgs, workingDir, timeoutMs);
+
+            // Parse JSONL output — codex exec review uses same format as exec
+            let response = '';
+            const lines = codexOutput.trim().split('\n');
+            for (const line of lines) {
+                try {
+                    const json = JSON.parse(line);
+                    if (json.type === 'item.completed' && json.item?.type === 'agent_message') {
+                        response = json.item.text;
+                    }
+                } catch (e) {
+                    // Ignore lines that aren't valid JSON
+                }
+            }
+
+            return { response: response || 'No review output from Codex. There may be no uncommitted changes.' };
+        }
+
         log('INFO', `Using Codex CLI (agent: ${agentId})`);
 
         const shouldResume = !shouldReset;
@@ -139,7 +179,6 @@ export async function invokeAgent(
             log('INFO', `🔄 Resetting Codex conversation for agent: ${agentId}`);
         }
 
-        const modelId = resolveCodexModel(agent.model);
         const codexArgs = ['exec'];
         if (shouldResume) {
             codexArgs.push('resume', '--last');

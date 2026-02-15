@@ -3,6 +3,7 @@ export interface AgentConfig {
     provider: string;       // 'anthropic' or 'openai'
     model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
     working_directory: string;
+    mode?: string;           // optional: 'review' for codex review agents
 }
 
 export interface TeamConfig {
