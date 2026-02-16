@@ -11,7 +11,7 @@ fi
 LOG_FILE="$TINYCLAW_HOME/logs/heartbeat.log"
 QUEUE_INCOMING="$TINYCLAW_HOME/queue/incoming"
 QUEUE_OUTGOING="$TINYCLAW_HOME/queue/outgoing"
-SETTINGS_FILE="$PROJECT_ROOT/.tinyclaw/settings.json"
+SETTINGS_FILE="$PROJECT_ROOT/settings.json"
 
 # Read interval from settings.json, default to 3600
 if [ -f "$SETTINGS_FILE" ]; then
@@ -56,8 +56,15 @@ while true; do
 
     AGENT_COUNT=0
 
-    # Send heartbeat to each agent
+    # Send heartbeat to each agent (skip review-mode agents)
     for AGENT_ID in $AGENT_IDS; do
+        # Skip agents with mode="review" — they only respond to team handoffs
+        AGENT_MODE=$(jq -r "(.agents // {}).\"${AGENT_ID}\".mode // empty" "$SETTINGS_FILE" 2>/dev/null)
+        if [ "$AGENT_MODE" = "review" ]; then
+            log "  → Agent @$AGENT_ID: skipped (review mode)"
+            continue
+        fi
+
         AGENT_COUNT=$((AGENT_COUNT + 1))
 
         # Get agent's working directory
@@ -79,17 +86,16 @@ while true; do
         # Generate unique message ID
         MESSAGE_ID="heartbeat_${AGENT_ID}_$(date +%s)_$$"
 
-        # Write to queue with @agent_id routing prefix
-        cat > "$QUEUE_INCOMING/${MESSAGE_ID}.json" << EOF
-{
-  "channel": "heartbeat",
-  "sender": "System",
-  "senderId": "heartbeat_${AGENT_ID}",
-  "message": "@${AGENT_ID} ${PROMPT}",
-  "timestamp": $(date +%s)000,
-  "messageId": "$MESSAGE_ID"
-}
-EOF
+        # Write to queue with @agent_id routing prefix (use jq to escape message content)
+        jq -n \
+          --arg channel "heartbeat" \
+          --arg sender "System" \
+          --arg senderId "heartbeat_${AGENT_ID}" \
+          --arg message "@${AGENT_ID} ${PROMPT}" \
+          --argjson timestamp "$(date +%s)000" \
+          --arg messageId "$MESSAGE_ID" \
+          '{channel: $channel, sender: $sender, senderId: $senderId, message: $message, timestamp: $timestamp, messageId: $messageId}' \
+          > "$QUEUE_INCOMING/${MESSAGE_ID}.json"
 
         log "  ✓ Queued for @$AGENT_ID: $MESSAGE_ID"
     done
