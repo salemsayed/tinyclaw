@@ -72,7 +72,11 @@ export async function runCommand(command: string, args: string[], cwd?: string, 
             if (killTimer) clearTimeout(killTimer);
 
             if (killed) {
-                reject(new Error(`Command timed out after ${Math.round(timeoutMs! / 1000)} seconds and was terminated`));
+                // Preserve partial output so the caller can return something useful
+                const partialOutput = stdout.trim() || stderr.trim();
+                const err = new Error(`Command timed out after ${Math.round(timeoutMs! / 1000)} seconds and was terminated`);
+                (err as any).partialOutput = partialOutput;
+                reject(err);
                 return;
             }
 
@@ -147,10 +151,9 @@ export async function invokeAgent(
                 '--skip-git-repo-check',
                 '--json'
             );
-            // Teammate handoff message becomes custom review instructions
-            if (message) {
-                codexArgs.push(message);
-            }
+            // Note: --uncommitted and PROMPT are mutually exclusive in codex exec review.
+            // The message from the teammate/user is contextual — codex already knows
+            // to review uncommitted changes via the --uncommitted flag.
 
             const { stdout: codexOutput } = await runCommand('codex', codexArgs, workingDir, timeoutMs);
 
